@@ -20,7 +20,9 @@
    ```json
    [
      {"alias": "gpu-node-1", "tag": ""},
+     {"alias": "gpu-node-2", "tag": ""}
      {"alias": "npu-node-1", "tag": ""}
+     ......
    ]
-<img width="1430" height="737" alt="image" src="https://github.com/user-attachments/assets/940bd8e8-0ed3-4b1c-a6c6-f53b281c66f7" />
-类似的这样改就可以了，改后打开exe文件即可查看各服务器的占用情况
+需要注意是的json文件中alias需要与ssh配置文件服务器的名字保持一致，tag可以随便取
+
