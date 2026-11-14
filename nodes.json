@@ -1,0 +1,18 @@
+[
+  {
+    "alias": "server1",
+    "tag": "4090-Node1"
+  },
+  {
+    "alias": "server2",
+    "tag": "4090-Node2"
+  },
+  {
+    "alias": "server3",
+    "tag": "4090-Node3"
+  },
+  {
+    "alias": "zebra-server-ascend",
+    "tag": "Ascend-910B"
+  }
+]
