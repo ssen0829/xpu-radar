@@ -22,7 +22,18 @@
      {"alias": "gpu-node-1", "tag": ""},
      {"alias": "gpu-node-2", "tag": ""}
      {"alias": "npu-node-1", "tag": ""}
-     ......
    ]
 需要注意是的json文件中alias需要与ssh配置文件服务器的名字保持一致，tag可以随便取
 
+### 方式二：Python 源码运行（适用于 Linux / macOS / Windows 开发者）
+克隆仓库并安装依赖：
+
+Bash
+git clone [https://github.com/ssen0829/xpu-radar.git](https://github.com/ssen0829/xpu-radar.git)
+cd xpu-radar
+pip install -r requirements.txt
+修改同目录下的 nodes.json 配置服务器别名（格式同方式一），然后在终端运行：
+
+Bash
+# 查看全部节点算力状态
+python xpu_top.py
