@@ -28,7 +28,11 @@
 ### 方式二：Python 源码运行（适用于 Linux / macOS / Windows 开发者）
 克隆仓库并安装依赖：
 
-Bash
+### 方式二：Python 源码运行（适用于 Linux / macOS / Windows 开发者）
+
+克隆仓库并安装依赖：
+
+```bash
 git clone [https://github.com/ssen0829/xpu-radar.git](https://github.com/ssen0829/xpu-radar.git)
 cd xpu-radar
 pip install -r requirements.txt
