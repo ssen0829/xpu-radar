@@ -26,7 +26,13 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     done
 elif command -v npu-smi >/dev/null 2>&1; then
     echo "===TYPE:NPU==="
-    npu-smi info
+    npu_out=$(npu-smi info)
+    echo "$npu_out"
+    echo "===NPU_USERS==="
+    pids=$(echo "$npu_out" | awk -F'|' '/Process id/{flag=1; next} flag && NF>=4 {gsub(/^[ \t]+|[ \t]+$/, "", $3); if ($3 ~ /^[0-9]+$/) print $3}' | paste -sd, -)
+    if [ -n "$pids" ]; then
+        ps -o pid=,user= -p "$pids" 2>/dev/null
+    fi
 else
     echo "===TYPE:OFFLINE==="
 fi
@@ -43,21 +49,33 @@ def load_nodes() -> list[dict]:
     except Exception:
         return DEFAULT_NODES
 
-async def query_node(node: dict) -> dict:
+async def query_node(node: dict, delay: float = 0.0) -> dict:
+    # 错峰启动，避免多路 SSH 同时握手挤爆跳板机 MaxStartups 队列
+    if delay > 0:
+        await asyncio.sleep(delay)
     alias, tag = node["alias"], node["tag"]
+    proc = None
     try:
         creationflags = 0x08000000 if os.name == "nt" else 0
         proc = await asyncio.create_subprocess_exec(
-            "ssh", "-o", "ConnectTimeout=4", "-o", "BatchMode=yes", alias, REMOTE_PROBE_CMD,
+            "ssh",
+            "-o", "ConnectTimeout=10",
+            "-o", "BatchMode=yes",
+            alias, REMOTE_PROBE_CMD,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             creationflags=creationflags,
         )
-        stdout, stderr = await proc.communicate()
+        # 单节点总耗时限制 15 秒，兼顾跨跳板机握手延迟与卡死兜底
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
         if proc.returncode != 0:
             return {"alias": alias, "tag": tag, "error": stderr.decode(errors="ignore").strip() or "SSH Failed", "cards": []}
         output = stdout.decode("utf-8", errors="ignore")
         return {"alias": alias, "tag": tag, "error": None, "cards": parse_node_output(alias, tag, output)}
+    except asyncio.TimeoutError:
+        if proc and proc.returncode is None:
+            proc.kill()
+        return {"alias": alias, "tag": tag, "error": "Timeout (>15s)", "cards": []}
     except Exception as e:
         return {"alias": alias, "tag": tag, "error": str(e), "cards": []}
 
@@ -94,12 +112,27 @@ def parse_node_output(alias: str, tag: str, output: str) -> list[dict]:
                 })
 
     elif "===TYPE:NPU===" in output:
-        lines = output.splitlines()
+        parts = output.split("===NPU_USERS===")
+        npu_info_part = parts[0]
+        user_lines = parts[1].strip().splitlines() if len(parts) > 1 else []
+
+        # 建立 PID -> Linux 用户名映射表
+        pid_to_user = {}
+        for uline in user_lines:
+            ucols = uline.split()
+            if len(ucols) >= 2 and ucols[0].isdigit():
+                pid_to_user[ucols[0]] = ucols[1]
+
+        lines = npu_info_part.splitlines()
         npu_map = {}
         for i, line in enumerate(lines):
-            mem_match = re.search(r"(\d+)\s*/\s*(\d+)", line)
-            if mem_match and i > 0 and ("910" in lines[i - 1] or "310" in lines[i - 1]):
-                used, total = int(mem_match.group(1)), int(mem_match.group(2))
+            mem_matches = re.findall(r"(\d+)\s*/\s*(\d+)", line)
+            if mem_matches and i > 0 and ("910" in lines[i - 1] or "310" in lines[i - 1]):
+                # 910B 存在 Memory-Usage 与 HBM-Usage 两列，若前者为 0/0 则取后者 HBM 显存
+                used, total = int(mem_matches[0][0]), int(mem_matches[0][1])
+                if total == 0 and len(mem_matches) > 1:
+                    used, total = int(mem_matches[1][0]), int(mem_matches[1][1])
+
                 prev_cols = [c.strip() for c in lines[i - 1].split("|") if c.strip()]
                 curr_cols = [c.strip() for c in line.split("|") if c.strip()]
                 npu_id = prev_cols[0].split()[0] if prev_cols else "?"
@@ -124,10 +157,13 @@ def parse_node_output(alias: str, tag: str, output: str) -> list[dict]:
                 cols = [c.strip() for c in line.split("|") if c.strip()]
                 if len(cols) >= 4 and cols[0][0].isdigit():
                     npu_id = cols[0].split()[0]
+                    pid = cols[1].strip()
                     proc_name = cols[2]
                     proc_mem = int(cols[3]) / 1024 if cols[3].isdigit() else 0
+                    # 优先显示反查到的 Linux 用户名，查不到时回退显示进程名
+                    display_name = pid_to_user.get(pid, proc_name)
                     if npu_id in npu_map:
-                        npu_map[npu_id]["users"].append(f"{proc_name}({proc_mem:.1f}G)")
+                        npu_map[npu_id]["users"].append(f"{display_name}({proc_mem:.1f}G)")
 
         for item in npu_map.values():
             item["users"] = ", ".join(item["users"]) if item["users"] else "-"
@@ -195,7 +231,7 @@ def render_dashboard(console: Console, results: list[dict], only_free: bool = Fa
 async def run_scan(console: Console, only_free: bool):
     nodes = load_nodes()
     with console.status("[bold green]Scanning cluster nodes via SSH..."):
-        results = await asyncio.gather(*(query_node(n) for n in nodes))
+        results = await asyncio.gather(*(query_node(n, delay=i * 0.25) for i, n in enumerate(nodes)))
     render_dashboard(console, results, only_free=only_free)
 
 def main():
